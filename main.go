@@ -11,6 +11,8 @@ import (
 	"os"
 	"github.com/shinyleefeon/Chirpy.git/internal/database"
 	"github.com/joho/godotenv"
+	"github.com/google/uuid"
+	"time"
 )
 
 import _ "github.com/lib/pq"
@@ -18,6 +20,14 @@ import _ "github.com/lib/pq"
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	database	  *database.Queries
+	platform	  string
+}
+
+type User struct {
+	ID    uuid.UUID  `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email string `json:"email"`
 }
 
 func (c *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -62,6 +72,7 @@ func respondWithJSON(w http.ResponseWriter, statusCode int, payload interface{})
 func main() {
 	apiCFG := &apiConfig{}
 	godotenv.Load()
+	apiCFG.platform = os.Getenv("PLATFORM")
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -110,6 +121,27 @@ func main() {
 		w.Write(data)
 	})
 
+	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
+		type parameters struct {
+			Email string `json:"email"`
+		}
+		params := parameters{}
+		decoder := json.NewDecoder(r.Body)
+		err := decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decoding parameters: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		user, err := apiCFG.database.CreateUser(r.Context(), params.Email)
+		if err != nil {
+			log.Printf("Error creating user: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		respondWithJSON(w, 201, user)
+	})
+
 	mux.HandleFunc("GET /admin/metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -123,9 +155,10 @@ func main() {
 
 	mux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
 		apiCFG.fileserverHits.Store(0)
+		apiCFG.database.DeleteUsers(r.Context())
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Metrics reset\n"))
+		w.Write([]byte("Metrics and users reset\n"))
 	})
 	
 	Server := &http.Server{
