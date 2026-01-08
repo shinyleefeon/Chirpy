@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"time"
 	"github.com/shinyleefeon/Chirpy.git/internal/auth"
+	"sort"
 )
 
 import _ "github.com/lib/pq"
@@ -155,12 +156,40 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
-		chirps, err := apiCFG.database.ListChirps(r.Context())
-		if err != nil {
-			log.Printf("Error listing chirps: %s", err)
-			w.WriteHeader(500)
-			return
+		authorIDStr := r.URL.Query().Get("author_id")
+		var authorID uuid.UUID
+		var chirps []database.Chirp
+		if authorIDStr != "" {
+			var err error
+			authorID, err = uuid.Parse(authorIDStr)
+			if err != nil {
+				log.Printf("Error parsing author ID: %s", err)
+				w.WriteHeader(400)
+				return
+			}
 		}
+		if authorID != uuid.Nil {
+			chirps, err = apiCFG.database.GetChirpsByUserID(r.Context(), authorID)
+			if err != nil {
+				log.Printf("Error getting chirps by user ID: %s", err)
+				w.WriteHeader(500)
+				return
+			}
+		} else {
+			chirps, err = apiCFG.database.ListChirps(r.Context())
+			if err != nil {
+				log.Printf("Error listing chirps: %s", err)
+				w.WriteHeader(500)
+				return
+			}
+		}
+
+		if r.URL.Query().Get("sort") == "desc" {
+			sort.Slice(chirps, func(i, j int) bool {
+				return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+			})
+		}
+
 		type responseVal struct {
 			ID        uuid.UUID `json:"id"`
 			CreatedAt time.Time `json:"created_at"`
